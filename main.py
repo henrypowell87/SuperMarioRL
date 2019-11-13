@@ -40,6 +40,7 @@ epochs = 50
 batch_size = 20
 
 net = Net(obs_size=obs_size, hidden_size=200, n_actions=n_outputs)
+net.cuda()
 
 loss = CrossEntropyLoss()
 optimizer = optim.Adam(params=net.parameters(), lr=0.001)
@@ -48,12 +49,12 @@ trial = 1
 
 for i in range(epochs):
     print('Epoch: ' + str(i+1))
+    net.load_state_dict(torch.load(PATH))
+    net.cuda()
     batch_actions, batch_states, batch_rewards = generate_batch(env=env, batch_size=batch_size, net=net, render=False)
 
     elite_actions, elite_states = filter_batch(batch_actions=batch_actions, batch_states=batch_states,
                                                batch_rewards=batch_rewards, percentile=80)
-
-    net.cuda()
     elite_states, elite_actions = torch.FloatTensor(elite_states), torch.LongTensor(elite_actions)
     elite_states = elite_states.permute(0, 3, 1, 2)
     elite_states, elite_actions = elite_states.to(device), elite_actions.to(device)

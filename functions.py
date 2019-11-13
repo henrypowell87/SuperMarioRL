@@ -2,14 +2,12 @@ import numpy as np
 import torch
 from torch.nn import Softmax
 
-device = torch.device('cuda:0')
 
 # Generate batch of episodes
 def generate_batch(env, batch_size, net, render=False):
+    device = torch.device('cuda:0')
     activation = Softmax(dim=1)
-
     batch_actions, batch_states, batch_rewards = [], [], []
-
     life = 2
     for i in range(batch_size):
         print('Trial: ' + str(i+1))
@@ -19,7 +17,7 @@ def generate_batch(env, batch_size, net, render=False):
         for step in range(5000):
             s_v = torch.FloatTensor([s])
             s_v = s_v.permute(0, 3, 1, 2)
-            s_v.to(device)
+            s_v = s_v.to(device)
             act_probs_v = activation(net(s_v))
             act_probs_v = torch.Tensor.cpu(act_probs_v)
             act_probs = act_probs_v.data.numpy()[0]
