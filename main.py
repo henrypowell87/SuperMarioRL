@@ -1,87 +1,83 @@
 import numpy as np
-from neuralnet import nn
-from nes_py.wrappers import BinarySpaceToDiscreteSpaceEnv
-import gym_super_mario_bros
+import torch
+from torch.nn import CrossEntropyLoss
+import torch.optim as optim
+from neuralnet import Net
+from nes_py.wrappers import JoypadSpace
 from gym_super_mario_bros.actions import SIMPLE_MOVEMENT
+import gym_super_mario_bros
+from functions import generate_batch, filter_batch
+
+PATH = './MarioRL.pth'
+
+SPEED_RUN_MOVEMENT = [
+    ['right'],
+    ['right', 'A'],
+    ['right', 'B'],
+    ['right', 'A', 'B'],
+    ['A']
+]
+
+SIMPLE_MOVEMENT = [
+    ['right'],
+    ['right', 'A'],
+    ['right', 'B'],
+    ['right', 'A', 'B'],
+    ['A'],
+    ['left'],
+]
+
+movement = SPEED_RUN_MOVEMENT
 
 env = gym_super_mario_bros.make('SuperMarioBros-v0')
-env = BinarySpaceToDiscreteSpaceEnv(env, SIMPLE_MOVEMENT)
+env = JoypadSpace(env, movement)
 
-# Generate batch of episodes
-def generate_batch(batch_size):
+device = torch.device('cuda:0')
 
-    batch_actions, batch_states, batch_rewards = [], [], []
+n_outputs = len(movement)
+obs_size = 240 * 256 * 3
+epochs = 50
+batch_size = 20
 
-    for i in range(batch_size):
+net = Net(obs_size=obs_size, hidden_size=200, n_actions=n_outputs)
 
-        done = True
+loss = CrossEntropyLoss()
+optimizer = optim.Adam(params=net.parameters(), lr=0.001)
 
-        actions, states = [], []
-        total_reward = 0
+trial = 1
 
-        for step in range(5000):
+for i in range(epochs):
+    print('Epoch: ' + str(i+1))
+    batch_actions, batch_states, batch_rewards = generate_batch(env=env, batch_size=batch_size, net=net, render=False)
 
-            if done:
-                state = env.reset()
+    elite_actions, elite_states = filter_batch(batch_actions=batch_actions, batch_states=batch_states,
+                                               batch_rewards=batch_rewards, percentile=80)
 
-            action = env.action_space.sample()
+    net.cuda()
+    elite_states, elite_actions = torch.FloatTensor(elite_states), torch.LongTensor(elite_actions)
+    elite_states = elite_states.permute(0, 3, 1, 2)
+    elite_states, elite_actions = elite_states.to(device), elite_actions.to(device)
 
-            state, reward, done, info = env.step(action)
+    optimizer.zero_grad()
 
-            total_reward += reward
+    outputs = net(elite_states)
 
-            actions.append(action)
+    loss_v = loss(outputs, elite_actions)
 
-            states.append(state)
+    loss_v.backward()
+    optimizer.step()
 
-            env.render()
+    mean_reward, threshold = np.mean(batch_rewards), np.percentile(batch_rewards, 80)
+    print("%d: loss=%.3f, reward mean=%.1f, reward threshold=%.1f" % (i, loss_v.item(), mean_reward, threshold))
 
-        batch_actions.append(actions)
-        batch_states.append(states)
-        batch_rewards.append(total_reward)
+    torch.save(net.state_dict(), PATH)
 
-    return batch_actions, batch_states, batch_rewards
+torch.save(net.state_dict(), PATH)
 
+net.load_state_dict(torch.load(PATH))
 
-#Return best srtates and actions
-def filter_batch(batch_actions, batch_states, batch_rewards, percentile=50):
-
-        threshold = np.percentile(batch_rewards, percentile)
-
-        best_actions, best_states = [], []
-
-        for i in range(len(batch_rewards)):
-            if batch_rewards[i] > threshold:
-                for j in range(len(batch_states[i])):
-                    best_actions.append(batch_actions[i][j])
-                    best_states.append(batch_states[i][j])
-
-        return best_actions, best_states
-
-
-batch_actions, batch_states, batch_rewards = generate_batch(10)
-best_actions, best_states = filter_batch(batch_actions, batch_states, batch_rewards, percentile=80)
-
-np.save('best_actions', best_actions)
-np.save('best_states', best_states)
-
-n_outputs = np.max(best_actions)
-
-train_data = best_states[:16000]
-train_labels = best_actions[:16000]
-
-test_data = best_states[16000:]
-test_labels = best_actions[16000:]
-
-epochs = 200
-verbose = 1
-batch_size = 1000
-
-nn(n_outputs=n_outputs, train_data=train_data, train_labels=train_labels, test_data=test_data,
-   test_labels=test_labels, epochs=epochs, verbose=verbose, batch_size=batch_size)
-
-print(best_actions)
-print(best_states)
-print(np.max(best_actions))
-
+generate_batch(env=env, batch_size=1, net=net, render=True)
 env.close()
+
+# Make a function for playing the game through once using the trainined neural net (this will look something
+# like generate batch only it doesn't need to store the variables.
